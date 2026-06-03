@@ -59,9 +59,9 @@ interface ToolDef {
 
 const SERVER_INFO = {
   name: 'nextdev-mcp',
-  version: '0.2.0',
+  version: '0.3.0',
   description:
-    'Query the Nextdev Agent Commerce Index. Discover real endpoints, real code samples, and ranked API recommendations grounded in agent-readiness methodology.',
+    'Query the Nextdev Agent Commerce Index. Discover real endpoints, real code samples, full structured post content, and ranked API recommendations grounded in agent-readiness methodology.',
 };
 
 async function resolveOrg(orgSlug: string) {
@@ -355,6 +355,60 @@ const tools: ToolDef[] = [
         category: category || null,
         posts: trimmed,
         total: snap.size,
+        nextStep:
+          'Call get_blog_post(orgSlug, slug) for any post above to get the full structured content blocks (code, comparisons, tables, steps) — not just the URL.',
+      };
+    },
+  },
+
+  {
+    name: 'get_blog_post',
+    description:
+      'Return the full structured content of a single Nextdev customer blog post. Returns the title, excerpt, category, post type, tags, plus the complete content as an ordered array of typed blocks: code blocks (with language tag), comparison blocks (left/right vendor columns), step blocks, table blocks, list blocks, company-card blocks, headings, quotes, callouts, text. This is the structured artifact behind the post — agents read blocks, not HTML. Use this AFTER query_blog identifies a post worth fully reading.',
+    inputSchema: {
+      type: 'object',
+      required: ['orgSlug', 'slug'],
+      properties: {
+        orgSlug: { type: 'string', description: 'Customer org slug from list_orgs.' },
+        slug: { type: 'string', description: 'Post slug from query_blog results.' },
+      },
+    },
+    handler: async (args: Record<string, any>) => {
+      const orgSlug: string = typeof args.orgSlug === 'string' ? args.orgSlug : '';
+      const slug: string = typeof args.slug === 'string' ? args.slug : '';
+      const org = await resolveOrg(orgSlug);
+      const snap = await db()
+        .collection('blogPosts')
+        .where('organizationId', '==', org.id)
+        .where('slug', '==', slug)
+        .where('status', '==', 'published')
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        throw new Error(
+          `No published post with slug="${slug}" for org="${orgSlug}". Use query_blog to find valid slugs.`
+        );
+      }
+      const data = snap.docs[0].data() as any;
+      return {
+        org: { slug: orgSlug, name: org.companyName },
+        slug: data.slug,
+        title: data.title,
+        excerpt: data.excerpt,
+        category: data.category,
+        postType: data.postType || null,
+        industry: data.industry || null,
+        tags: data.tags || [],
+        author: data.author || null,
+        wordCount: data.wordCount || null,
+        readTime: data.readTime || null,
+        publishedAt:
+          data.publishedAt?.toDate?.()?.toISOString() ||
+          data.createdAt?.toDate?.()?.toISOString() ||
+          null,
+        url: `https://www.joinnextdev.com/${orgSlug}/${data.slug}`,
+        researchSources: data.researchSources || [],
+        content: data.content || [],
       };
     },
   },
