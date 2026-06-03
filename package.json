@@ -1,0 +1,41 @@
+{
+  "name": "@nextdev-labs/mcp",
+  "version": "0.2.0",
+  "description": "Open-source MCP server for the Nextdev Agent Commerce Index — query, recommend, and compare APIs by agent-readiness. Hosted at https://www.joinnextdev.com/api/mcp.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/http.js",
+  "bin": {
+    "nextdev-mcp": "dist/http.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/http.js",
+    "dev": "tsx src/http.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"(add eslint when ready)\""
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "openai": "^4.65.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nextdev-labs/mcp.git"
+  },
+  "homepage": "https://www.joinnextdev.com/labs",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "api",
+    "recommendation",
+    "agent-commerce",
+    "nextdev"
+  ]
+}
