@@ -1,6 +1,6 @@
 # Nextdev MCP
 
-The open-source MCP server that powers the [Nextdev Agent Commerce Index](https://www.joinnextdev.com/labs).
+The open-source MCP server that powers the [Nextdev Agent Usability Index](https://www.joinnextdev.com/labs).
 
 When an AI coding agent needs to choose an API and ground its integration code, it calls Nextdev. We return ranked recommendations scored on **agent-readiness** plus the structured API surface — and the full structured content of every customer post — to build with.
 

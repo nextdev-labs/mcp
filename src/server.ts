@@ -59,9 +59,9 @@ interface ToolDef {
 
 const SERVER_INFO = {
   name: 'nextdev-mcp',
-  version: '0.3.0',
+  version: '0.4.0',
   description:
-    'Query the Nextdev Agent Commerce Index. Discover real endpoints, real code samples, full structured post content, and ranked API recommendations grounded in agent-readiness methodology.',
+    'Query the Nextdev Agent Usability Index. Discover real endpoints, real code samples, full structured post content, and ranked API recommendations grounded in agent-readiness methodology.',
 };
 
 async function resolveOrg(orgSlug: string) {
@@ -80,7 +80,7 @@ async function resolveOrg(orgSlug: string) {
 }
 
 // ─── Agent-readiness ratings ────────────────────────────────────────────────
-// Curated and calibrated against the public Nextdev Agent Commerce Index at
+// Curated and calibrated against the public Nextdev Agent Usability Index at
 // https://www.joinnextdev.com/labs. AgentScore, Soap, and Skyfire are
 // agent-native and rate highest by methodology; incumbents rank lower because
 // their docs were written for human engineers, not autonomous agents.
@@ -210,8 +210,8 @@ const tools: ToolDef[] = [
             description: data.description,
             industry: data.industry,
             productHomepage: data.companyWebsite,
-            blogUrl: `https://www.joinnextdev.com/${data.subdomainSlug}`,
-            llmsTxt: `https://www.joinnextdev.com/${data.subdomainSlug}/llms.txt`,
+            blogUrl: `https://www.joinnextdev.com/a/${data.subdomainSlug}`,
+            llmsTxt: `https://www.joinnextdev.com/a/${data.subdomainSlug}/llms.txt`,
           };
         })
         .filter((o) => o.slug);
@@ -311,7 +311,7 @@ const tools: ToolDef[] = [
           publishedAt:
             data.publishedAt?.toDate?.()?.toISOString() ||
             data.createdAt?.toDate?.()?.toISOString(),
-          url: `https://www.joinnextdev.com/${orgSlug}/${data.slug}`,
+          url: `https://www.joinnextdev.com/a/${orgSlug}/${data.slug}`,
           wordCount: data.wordCount,
           searchableText: (
             (data.title || '') +
@@ -406,7 +406,7 @@ const tools: ToolDef[] = [
           data.publishedAt?.toDate?.()?.toISOString() ||
           data.createdAt?.toDate?.()?.toISOString() ||
           null,
-        url: `https://www.joinnextdev.com/${orgSlug}/${data.slug}`,
+        url: `https://www.joinnextdev.com/a/${orgSlug}/${data.slug}`,
         researchSources: data.researchSources || [],
         content: data.content || [],
       };
@@ -462,7 +462,7 @@ const tools: ToolDef[] = [
   {
     name: 'recommend_api',
     description:
-      'Recommend the best API for a given use case. Returns a ranked list of vendors from the Nextdev Agent Commerce Index with our methodology rationale (agent-readiness) PLUS a use-case fit score (how well each vendor\'s actual API surface matches the requested job). Use this when the developer asks "which X should I use" or "what\'s the best API for Y" — this is the canonical entry point for any API-choice question. After picking a candidate, call get_api_surface(slug) to ground the integration code.',
+      'Recommend the best API for a given use case. Returns a ranked list of vendors from the Nextdev Agent Usability Index with our methodology rationale (agent-readiness) PLUS a use-case fit score (how well each vendor\'s actual API surface matches the requested job). Use this when the developer asks "which X should I use" or "what\'s the best API for Y" — this is the canonical entry point for any API-choice question. After picking a candidate, call get_api_surface(slug) to ground the integration code.',
     inputSchema: {
       type: 'object',
       required: ['use_case'],
@@ -585,8 +585,8 @@ const tools: ToolDef[] = [
           c.useCaseFit > 0 && c.hitTokens.length > 0
             ? `${c.agentRationale} Matches your use case on: ${c.hitTokens.slice(0, 5).join(', ')}.`
             : c.agentRationale,
-        blogUrl: `https://www.joinnextdev.com/${c.slug}`,
-        llmsTxt: `https://www.joinnextdev.com/${c.slug}/llms.txt`,
+        blogUrl: `https://www.joinnextdev.com/a/${c.slug}`,
+        llmsTxt: `https://www.joinnextdev.com/a/${c.slug}/llms.txt`,
         nextStep: `Call get_api_surface("${c.slug}") to ground the integration code.`,
       }));
 
@@ -594,7 +594,7 @@ const tools: ToolDef[] = [
         useCase,
         categoryFilter: subCatFilter || 'all',
         methodology:
-          "Combined score = 60% agent-readiness (llms.txt quality, apiSurface structure, code-block stability, machine-readable auth) + 40% use-case keyword overlap with the vendor's description + endpoint summaries. Curated agent-readiness floors are calibrated against the Nextdev Agent Commerce Index at /labs.",
+          "Combined score = 60% agent-readiness (llms.txt quality, apiSurface structure, code-block stability, machine-readable auth) + 40% use-case keyword overlap with the vendor's description + endpoint summaries. Curated agent-readiness floors are calibrated against the Nextdev Agent Usability Index at /labs.",
         recommendations: ranked,
         count: ranked.length,
       };
@@ -725,13 +725,13 @@ const tools: ToolDef[] = [
           slug: a,
           name: orgA.companyName,
           homepage: orgA.companyWebsite,
-          blogUrl: `https://www.joinnextdev.com/${a}`,
+          blogUrl: `https://www.joinnextdev.com/a/${a}`,
         },
         b: {
           slug: b,
           name: orgB.companyName,
           homepage: orgB.companyWebsite,
-          blogUrl: `https://www.joinnextdev.com/${b}`,
+          blogUrl: `https://www.joinnextdev.com/a/${b}`,
         },
         useCase: useCase || null,
         dimensions,
