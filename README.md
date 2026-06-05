@@ -10,7 +10,26 @@ This repo is the source for the hosted endpoint at [`https://www.joinnextdev.com
 
 Every AI coding agent makes two decisions per integration: **which API to use**, and **how to use it**. Both decisions are usually made on training data that's 12–18 months stale. Nextdev sits in between — we maintain a live, structured index of API vendors plus their actual endpoints, sample code, and structured blog content. The agent calls us, we return decisions grounded in real surfaces.
 
-## Install (one paste)
+## Install
+
+### Option A — one command (recommended)
+
+```bash
+npx nextdev-setup
+```
+
+This wires `.mcp.json`, and — with your explicit consent at every step — appends a small reflex rule to your project's `CLAUDE.md` or `.cursorrules` so the agent reflexively calls Nextdev when you mention any third-party API. Idempotent (won't double-write), supports `--dry-run`, zero runtime dependencies. See [bin/nextdev-setup.mjs](./bin/nextdev-setup.mjs) — it's ~250 lines of vanilla Node 18+, read it before you run it.
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Print every diff. Write nothing. |
+| `--yes`, `-y` | Auto-confirm all prompts (CI mode). |
+| `--campaign-code=CODE` | Append `?k=CODE` to the MCP URL for attribution. |
+| `--skip-mcp-json` | Don't touch `.mcp.json`. |
+| `--skip-rules` | Don't touch `CLAUDE.md` or `.cursorrules`. |
+| `--target-dir=DIR` | Install into a directory other than `cwd`. |
+
+### Option B — one paste (manual)
 
 ```json
 {
@@ -28,6 +47,10 @@ Every AI coding agent makes two decisions per integration: **which API to use**,
 - **Windsurf / Cline / Continue / any MCP-compliant client**: same URL, HTTP transport
 
 No API key. No login. Restart your IDE and the tools appear.
+
+### Manual override keyword
+
+In any prompt, write `use nextdev` to force the agent to consult our MCP, even if it would otherwise skip the tool call. Useful while the agent's reflex is forming.
 
 ## What an agent interaction actually looks like
 

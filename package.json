@@ -1,13 +1,20 @@
 {
   "name": "@nextdev-labs/mcp",
-  "version": "0.4.0",
-  "description": "Open-source MCP server for the Nextdev Agent Usability Index — query, recommend, and compare APIs by agent-readiness; pull full structured post content. Hosted at https://www.joinnextdev.com/api/mcp.",
+  "version": "0.6.0",
+  "description": "Open-source MCP server for the Nextdev Agent Usability Index — query, recommend, and compare developer APIs (Stripe, Plaid, Twilio, Persona, AgentMail, and more) by agent-readiness; pull full structured post content. Hosted at https://www.joinnextdev.com/api/mcp.",
   "license": "MIT",
   "type": "module",
   "main": "dist/http.js",
   "bin": {
-    "nextdev-mcp": "dist/http.js"
+    "nextdev-mcp": "dist/http.js",
+    "nextdev-setup": "bin/nextdev-setup.mjs"
   },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/http.js",
