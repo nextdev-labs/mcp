@@ -18,7 +18,7 @@ import { dispatch, type JsonRpcResponse } from './server.js';
 
 const SERVER_INFO_RESPONSE = {
   name: 'nextdev-mcp',
-  version: '0.6.0',
+  version: '0.6.1',
   transport: 'http',
   protocol: 'mcp/2024-11-05',
   docs: 'POST JSON-RPC 2.0 messages here. Supported methods: initialize, tools/list, tools/call.',
