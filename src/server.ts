@@ -24,6 +24,8 @@
  */
 import { db } from './firebase.js';
 import { retrieveTopK } from './retrieval.js';
+import OpenAI from 'openai';
+import { VENDOR_CORPUS, AGENT_READINESS_CORPUS, DEFAULT_READINESS } from './vendorCorpus.js';
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -207,6 +209,47 @@ const STOPWORDS_SET = new Set([
   'what', 'when', 'where', 'why', 'who', 'will', 'should', 'can', 'could',
   'would', 'api',
 ]);
+
+
+// ─── Embedding helpers ────────────────────────────────────────────────────────
+
+/** Cosine similarity between two equal-length vectors. */
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na  += a[i] * a[i];
+    nb  += b[i] * b[i];
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+/** Process-lifetime cache. Vendor embeddings are fixed; compute once per cold start. */
+let _vendorEmbedCache: Map<string, number[]> | null = null;
+
+/**
+ * Embed all vendors in VENDOR_CORPUS and cache the result.
+ * Uses the same model + dimensions as retrieval.ts (text-embedding-3-small, 256 dims)
+ * so the embedding space is identical across tools.
+ */
+async function getVendorEmbeddings(): Promise<Map<string, number[]>> {
+  if (_vendorEmbedCache) return _vendorEmbedCache;
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const slugs = Object.keys(VENDOR_CORPUS);
+  const texts = slugs.map((s) => VENDOR_CORPUS[s]);
+
+  const resp = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: texts,
+    dimensions: 256,
+  });
+
+  _vendorEmbedCache = new Map(
+    resp.data.map((item, i) => [slugs[i], item.embedding])
+  );
+  return _vendorEmbedCache;
+}
 
 function tokenizeForOverlap(text: string): string[] {
   return (text || '')
@@ -621,97 +664,108 @@ const tools: ToolDef[] = [
         .where('productType', '==', 'agent-tool')
         .get();
 
-      type Candidate = {
-        slug: string;
-        name: string;
-        description: string;
-        homepage: string;
-        agentReadiness: number;
-        agentRationale: string;
-        subCategory: string;
-        useCaseFit: number;
-        endpointCount: number;
-        hitTokens: string[];
-      };
+      // ── Embed the query ─────────────────────────────────────────────────────
+      // Falls back to keyword-only if OPENAI_API_KEY is absent.
+      let queryVec: number[] | null = null;
+      let vendorEmbeds: Map<string, number[]> = new Map();
+      if (process.env.OPENAI_API_KEY) {
+        try {
+          const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          const [qResp, vEmbeds] = await Promise.all([
+            openai.embeddings.create({ model: 'text-embedding-3-small', input: [useCase], dimensions: 256 }),
+            getVendorEmbeddings(),
+          ]);
+          queryVec = qResp.data[0].embedding;
+          vendorEmbeds = vEmbeds;
+        } catch {
+          // fall through to keyword scoring
+        }
+      }
 
-      const useCaseTokens = tokenizeForOverlap(useCase);
-      const candidates: Candidate[] = [];
-
+      // ── Build org metadata from Firestore ────────────────────────────────────
+      const orgMeta: Record<string, { name: string; homepage: string; endpointCount: number; rationale: string; subCategory: string }> = {};
       for (const d of snap.docs) {
         const data = d.data() as any;
         const slug: string = data.subdomainSlug;
         if (!slug) continue;
-        const rating = getAgentReadiness(slug);
-        if (!rating) continue; // only score vendors in the index
-        if (subCatFilter && rating.subCategory !== subCatFilter) continue;
-
-        // Load apiSurface for endpoint signals (best-effort)
-        let endpointSummaries = '';
         let endpointCount = 0;
         try {
           const surf = await db().collection('apiSurface').doc(d.id).get();
           if (surf.exists) {
-            const sd = surf.data() as any;
-            const eps = (sd.endpoints || []) as Array<{ method: string; path: string; summary?: string }>;
+            const eps = ((surf.data() as any).endpoints || []) as any[];
             endpointCount = eps.length;
-            endpointSummaries = eps.map((e) => `${e.path} ${e.summary || ''}`).join(' ');
           }
         } catch {}
+        const existingRating = getAgentReadiness(slug);
+        orgMeta[slug] = {
+          name: data.companyName || slug,
+          homepage: data.companyWebsite || '',
+          endpointCount,
+          rationale: existingRating?.rationale ?? `${slug} is indexed in the Nextdev Agent Usability Index.`,
+          subCategory: existingRating?.subCategory ?? 'general',
+        };
+      }
 
-        const corpus = `${data.description || ''} ${data.industry || ''} ${endpointSummaries}`;
-        const corpusTokens = new Set(tokenizeForOverlap(corpus));
-        const hits = useCaseTokens.filter((t) => corpusTokens.has(t));
-        const useCaseFit = useCaseTokens.length === 0 ? 0 : hits.length / useCaseTokens.length;
+      // ── Score every vendor in VENDOR_CORPUS ──────────────────────────────────
+      type ScoredVendor = {
+        slug: string; name: string; homepage: string;
+        subCategory: string; rationale: string;
+        agentReadiness: number; useCaseFit: number;
+        combinedScore: number; endpointCount: number;
+      };
+
+      const candidates: ScoredVendor[] = [];
+
+      for (const slug of Object.keys(VENDOR_CORPUS)) {
+        const meta = orgMeta[slug];
+        if (!meta) continue;
+        if (subCatFilter && meta.subCategory !== subCatFilter) continue;
+
+        const agentReadiness = AGENT_READINESS_CORPUS[slug] ?? DEFAULT_READINESS;
+
+        let useCaseFit: number;
+        if (queryVec && vendorEmbeds.has(slug)) {
+          const raw = cosineSimilarity(queryVec, vendorEmbeds.get(slug)!);
+          useCaseFit = (raw + 1) / 2;
+        } else {
+          const useCaseTokens = tokenizeForOverlap(useCase);
+          const corpusTokens = new Set(tokenizeForOverlap(VENDOR_CORPUS[slug]));
+          const hits = useCaseTokens.filter((t) => corpusTokens.has(t));
+          useCaseFit = useCaseTokens.length === 0 ? 0 : hits.length / useCaseTokens.length;
+        }
 
         candidates.push({
-          slug,
-          name: data.companyName || slug,
-          description: data.description || '',
-          homepage: data.companyWebsite || '',
-          agentReadiness: rating.score,
-          agentRationale: rating.rationale,
-          subCategory: rating.subCategory,
-          useCaseFit,
-          endpointCount,
-          hitTokens: hits,
+          slug, agentReadiness, useCaseFit,
+          combinedScore: Number((0.6 * agentReadiness + 0.4 * useCaseFit).toFixed(4)),
+          endpointCount: meta.endpointCount,
+          name: meta.name, homepage: meta.homepage,
+          subCategory: meta.subCategory, rationale: meta.rationale,
         });
       }
 
-      // Combined score: 60% agent-readiness, 40% use-case fit. Tiebreaker = endpoint count.
-      const scored = candidates
-        .map((c) => ({
-          ...c,
-          combinedScore: Number((0.6 * c.agentReadiness + 0.4 * c.useCaseFit).toFixed(4)),
-        }))
-        .sort((a, b) => {
-          if (b.combinedScore !== a.combinedScore) return b.combinedScore - a.combinedScore;
-          return b.endpointCount - a.endpointCount;
-        })
-        .slice(0, cap);
+      const ranked = candidates
+        .sort((a, b) => b.combinedScore !== a.combinedScore
+          ? b.combinedScore - a.combinedScore
+          : b.endpointCount - a.endpointCount)
+        .slice(0, cap)
+        .map((c, i) => ({
+          rank: i + 1, slug: c.slug, name: c.name, homepage: c.homepage,
+          subCategory: c.subCategory, score: c.combinedScore,
+          agentReadinessScore: Number(c.agentReadiness.toFixed(2)),
+          useCaseFitScore: Number(c.useCaseFit.toFixed(2)),
+          rationale: c.rationale,
+          blogUrl: `https://www.joinnextdev.com/a/${c.slug}`,
+          llmsTxt: `https://www.joinnextdev.com/a/${c.slug}/llms.txt`,
+          nextStep: `Call get_api_surface("${c.slug}") to ground the integration code.`,
+        }));
 
-      const ranked = scored.map((c, i) => ({
-        rank: i + 1,
-        slug: c.slug,
-        name: c.name,
-        homepage: c.homepage,
-        subCategory: c.subCategory,
-        score: c.combinedScore,
-        agentReadinessScore: Number(c.agentReadiness.toFixed(2)),
-        useCaseFitScore: Number(c.useCaseFit.toFixed(2)),
-        rationale:
-          c.useCaseFit > 0 && c.hitTokens.length > 0
-            ? `${c.agentRationale} Matches your use case on: ${c.hitTokens.slice(0, 5).join(', ')}.`
-            : c.agentRationale,
-        blogUrl: `https://www.joinnextdev.com/a/${c.slug}`,
-        llmsTxt: `https://www.joinnextdev.com/a/${c.slug}/llms.txt`,
-        nextStep: `Call get_api_surface("${c.slug}") to ground the integration code.`,
-      }));
-
+      const embeddingUsed = queryVec !== null;
       return {
         useCase,
         categoryFilter: subCatFilter || 'all',
-        methodology:
-          "Combined score = 60% agent-readiness (llms.txt quality, apiSurface structure, code-block stability, machine-readable auth) + 40% use-case keyword overlap with the vendor's description + endpoint summaries. Curated agent-readiness floors are calibrated against the Nextdev Agent Usability Index at /labs.",
+        methodology: embeddingUsed
+          ? 'Combined score = 60% agent-readiness + 40% embedding cosine similarity (text-embedding-3-small, 256d). Exhaustive ranking across all vendors — no candidate pre-filtering.'
+          : "OPENAI_API_KEY not set — using keyword overlap fallback.",
         recommendations: ranked,
         count: ranked.length,
       };
