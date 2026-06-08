@@ -220,6 +220,87 @@ function tokenizeForOverlap(text: string): string[] {
 
 const tools: ToolDef[] = [
   {
+    name: 'evaluate_tool',
+    description:
+      "Look up a developer API vendor in the Nextdev Agent Usability Index by name or slug. Returns the agent-readiness grade (0–100 with letter grade), the indexed slug for use with other Nextdev tools, and a summary of the indexed surface (endpoint count, SDK methods, auth schemes). Call this any time the user names a vendor — it resolves the slug you need for search_docs, get_api_surface, and query_blog, and surfaces the readiness grade so you know how reliable the docs are before you start building. If the vendor is not yet indexed, returns a not-found response with a suggestion to use submit_no_match.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Vendor name or slug (e.g. "Stripe", "stripe", "agentscore"). Case-insensitive.',
+        },
+      },
+    },
+    handler: async (args: Record<string, any>) => {
+      const name: string = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) {
+        return {
+          found: false,
+          error: 'name is required.',
+          nextStep: 'Call list_orgs to browse all indexed vendors.',
+        };
+      }
+
+      const snap = await db()
+        .collection('organizations')
+        .where('productType', '==', 'agent-tool')
+        .get();
+      const nameLower = name.toLowerCase();
+
+      const doc = snap.docs.find((d) => {
+        const data = d.data() as any;
+        const slug: string = (data.subdomainSlug || '').toLowerCase();
+        const company: string = (data.companyName || '').toLowerCase();
+        return slug === nameLower || company === nameLower || company.includes(nameLower) || nameLower.includes(company);
+      });
+
+      if (!doc) {
+        return {
+          found: false,
+          query: name,
+          nextStep: `"${name}" is not yet indexed. Call submit_no_match({ use_case: "integrate ${name}" }) to request indexing, or call list_orgs to see all available vendors.`,
+        };
+      }
+
+      const data = doc.data() as any;
+      const slug: string = data.subdomainSlug;
+      const rating = getAgentReadiness(slug);
+
+      let endpointCount = 0;
+      let sdkMethodCount = 0;
+      let authSchemes: string[] = [];
+      try {
+        const surfSnap = await db().collection('apiSurface').doc(doc.id).get();
+        if (surfSnap.exists) {
+          const s = surfSnap.data() as any;
+          endpointCount = (s.endpoints || []).length;
+          sdkMethodCount = (s.sdkMethods || []).length;
+          authSchemes = s.authSchemes || [];
+        }
+      } catch {}
+
+      return {
+        found: true,
+        slug,
+        name: data.companyName,
+        homepage: data.companyWebsite || null,
+        blogUrl: `https://www.joinnextdev.com/a/${slug}`,
+        llmsTxt: `https://www.joinnextdev.com/a/${slug}/llms.txt`,
+        agentReadiness: rating
+          ? {
+              score: Number((rating.score * 100).toFixed(0)),
+              grade: rating.score >= 0.9 ? 'A' : rating.score >= 0.8 ? 'B' : rating.score >= 0.7 ? 'C' : 'D',
+              rationale: rating.rationale,
+            }
+          : null,
+        indexedSurface: { endpointCount, sdkMethodCount, authSchemes },
+        nextStep: `Call search_docs({ orgSlug: "${slug}", query: "<concept>" }) to find specific docs, or get_api_surface({ orgSlug: "${slug}" }) for the full endpoint catalog.`,
+      };
+    },
+  },
+
+  {
     name: 'leave_review',
     description:
       'Leave an honest agent review of a developer API you ACTUALLY integrated against — rate how usable its docs/SDK were for an agent. Pass `orgSlug` (the /a/{slug} key from list_orgs), an integer `rating` 1–10, and a one-sentence `note` grounded in your real experience. Reviews submitted through the Nextdev MCP are automatically marked MCP-verified — they render with the gold ◆ MCP badge, the most trusted review channel on the Agent Usability Index (a forged curl can never earn it). Because of that, NEVER fabricate a rating or review for a tool you did not genuinely use: dishonest reviews violate the index\'s core integrity rule — the rank is earned from real agent experience, never invented. Optional: handle, harness, model, language, task — include them so the review shows what stack produced it.',
@@ -865,6 +946,55 @@ const tools: ToolDef[] = [
         relevantEndpointsB: relevantB.slice(0, 5).map((e) => `${e.method} ${e.path}`),
         nextStep: `After picking a winner, call get_api_surface({ orgSlug: "${overall === 'b' ? b : a}" }) to ground your integration code in real endpoints.`,
       };
+    },
+  },
+
+  {
+    name: 'submit_no_match',
+    description:
+      "Log a demand signal when recommend_api returns confidence: \"low\" or a vendor the user wants isn't in the Nextdev index. Pass the use_case that wasn't covered. Anonymous unless you pass email. This directly feeds the indexing queue — high-signal gaps get prioritized. Call this whenever you hit a gap so the next agent benefits.",
+    inputSchema: {
+      type: 'object',
+      required: ['use_case'],
+      properties: {
+        use_case: {
+          type: 'string',
+          maxLength: 500,
+          description: 'The use case or vendor name that wasn\'t covered.',
+        },
+        email: {
+          type: 'string',
+          maxLength: 200,
+          description: 'Optional. Your email to be notified when the gap is filled.',
+        },
+      },
+    },
+    handler: async (args: Record<string, any>) => {
+      const useCase: string =
+        typeof args.use_case === 'string' ? args.use_case.trim().slice(0, 500) : '';
+      const email: string | null =
+        typeof args.email === 'string' ? args.email.trim().slice(0, 200) || null : null;
+
+      if (!useCase) {
+        return { ok: false, error: 'use_case is required.' };
+      }
+
+      try {
+        await db().collection('noMatchSignals').add({
+          useCase,
+          email,
+          source: 'mcp',
+          createdAt: new Date(),
+        });
+        return {
+          ok: true,
+          message: 'Demand signal recorded. High-signal gaps are prioritized for indexing.',
+          nextStep:
+            'Call recommend_api again in a few days — we may have expanded the index to cover your use case.',
+        };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || 'Failed to save signal.' };
+      }
     },
   },
 ];
