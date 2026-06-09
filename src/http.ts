@@ -40,14 +40,32 @@ function writeJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readBody(req: IncomingMessage): Promise<string> {
+async function readBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => (data += chunk.toString('utf8')));
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        // Protect against large payloads that could OOM the process.
+        req.destroy();
+        reject(new Error('Payload too large'));
+        return;
+      }
+      data += chunk.toString('utf8');
+    });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
+
+// Simple in-memory rate limiter per IP. Sufficient for single-instance deployments.
+const RATE_LIMIT_MAX = 50; // requests
+const RATE_LIMIT_WINDOW_MS = 60_000; // per minute
+const rateMap = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -68,9 +86,28 @@ const server = createServer(async (req, res) => {
 
   // JSON-RPC dispatch
   if (req.method === 'POST' && (path === '/' || path === '/api/mcp')) {
+    // Rate limit per IP
+    const ip = (typeof req.headers['x-forwarded-for'] === 'string' ? (req.headers['x-forwarded-for'] as string).split(',')[0].trim() : undefined) || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = rateMap.get(ip);
+    if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+      rateMap.set(ip, { count: 1, windowStart: now });
+    } else {
+      entry.count += 1;
+      rateMap.set(ip, entry);
+      if (entry.count > RATE_LIMIT_MAX) {
+        writeJson(res, 429, {
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: 429, message: 'Too Many Requests' },
+        });
+        return;
+      }
+    }
+
     let body: any;
     try {
-      const raw = await readBody(req);
+      const raw = await readBody(req, 5 * 1024 * 1024);
       body = JSON.parse(raw);
     } catch {
       writeJson(res, 400, {
