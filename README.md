@@ -242,6 +242,22 @@ npm start
 
 The server speaks MCP Streamable HTTP on `/api/mcp`. Point any MCP client at `http://localhost:3000/api/mcp`.
 
+### Option C — stdio transport
+
+For local, no-network usage (works well with desktop MCP clients that support `stdio`), a `stdio` transport is available when running from source. Use the dev script during development:
+
+```bash
+npm run dev:stdio
+```
+
+Send line-delimited JSON-RPC messages to the process and it will write JSON-RPC responses to stdout (one JSON object or array per line). Example (bash):
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | npm run dev:stdio
+```
+
+When built, run `node dist/stdio.js` (script: `npm run start:stdio`).
+
 ## How to contribute
 
 This project is open to contributors. The most useful contributions today:

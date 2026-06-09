@@ -19,6 +19,8 @@
     "build": "tsc",
     "start": "node dist/http.js",
     "dev": "tsx src/http.ts",
+    "start:stdio": "node dist/stdio.js",
+    "dev:stdio": "tsx src/stdio.ts",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"(add eslint when ready)\""
   },
