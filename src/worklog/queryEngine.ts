@@ -162,6 +162,17 @@ function turnMatch(ref: SourceRef, t: RenderedTurn, i: number): TurnMatch {
 	};
 }
 
+const QUERY_STOPWORDS = new Set(['the','a','an','and','or','for','to','of','in','on','is','it','we','i','you','that','this','with','was','were','be','do','did','does','how','what','when','where','why','who','check','find','show','about','from','can','our','your','me','my']);
+
+// Split a free-text query into meaningful lowercased tokens (drops stopwords +
+// 1-2 char noise). Used for fuzzy any-token ranking so a vague phrase still hits.
+function tokenizeQuery(q?: string): string[] {
+	if (!q) return [];
+	return Array.from(new Set(
+		q.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter((t) => t.length > 2 && !QUERY_STOPWORDS.has(t)),
+	));
+}
+
 export function queryWork(opts: {
 	projectPath: string;
 	query?: string;
@@ -172,35 +183,47 @@ export function queryWork(opts: {
 	limit?: number;
 }): TurnMatch[] {
 	const limit = opts.limit ?? DEFAULT_MATCH_LIMIT;
-	const q = opts.query?.toLowerCase().trim();
+	const tokens = tokenizeQuery(opts.query);
+	const phrase = (opts.query || '').toLowerCase().trim();
 	const fileQ = opts.file?.toLowerCase().trim();
 	const since = opts.since ? new Date(opts.since).getTime() : null;
 	const until = opts.until ? new Date(opts.until).getTime() : null;
 
 	const refs = getRefs(opts.projectPath, opts.scope ?? 'project').slice(0, DEFAULT_SCAN_BUDGET);
-	const matches: TurnMatch[] = [];
+	const scored: { match: TurnMatch; score: number; ts: number }[] = [];
 
 	for (const ref of refs) {
 		let turns: RenderedTurn[];
 		try { turns = ref.loadTurns(); } catch { continue; }
 		for (let i = 0; i < turns.length; i++) {
 			const t = turns[i];
+			const ts = t.timestamp ? new Date(t.timestamp).getTime() : NaN;
+			// Hard filters: date window + file touched.
 			if (since !== null || until !== null) {
-				const ts = t.timestamp ? new Date(t.timestamp).getTime() : NaN;
-				if (isNaN(ts)) continue;                 // a date filter is set but this turn has no timestamp
+				if (isNaN(ts)) continue;
 				if (since !== null && ts < since) continue;
 				if (until !== null && ts > until) continue;
 			}
-			if (fileQ && !t.files.some(f => f.toLowerCase().includes(fileQ))) continue;
-			if (q) {
+			if (fileQ && !t.files.some((f) => f.toLowerCase().includes(fileQ))) continue;
+
+			// Relevance = fraction of query tokens present (any-match), + exact-phrase
+			// bonus. No query -> keep all within the filters, ranked by recency.
+			let score = 0;
+			if (tokens.length) {
 				const hay = [t.prompt, t.response, t.trace.join('\n'), t.files.join('\n')].join('\n').toLowerCase();
-				if (!hay.includes(q)) continue;
+				let matched = 0;
+				for (const tok of tokens) if (hay.includes(tok)) matched++;
+				if (matched === 0) continue;
+				score = matched / tokens.length;
+				if (phrase && hay.includes(phrase)) score += 1;
 			}
-			matches.push(turnMatch(ref, t, i));
-			if (matches.length >= limit) return matches;
+			scored.push({ match: turnMatch(ref, t, i), score, ts: isNaN(ts) ? 0 : ts });
 		}
 	}
-	return matches;
+
+	// Rank by relevance, then recency.
+	scored.sort((a, b) => (b.score - a.score) || (b.ts - a.ts));
+	return scored.slice(0, limit).map((s) => s.match);
 }
 
 export function recentWork(opts: { projectPath: string; scope?: Scope; limit?: number }): TurnMatch[] {

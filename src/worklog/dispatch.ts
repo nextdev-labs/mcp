@@ -128,14 +128,14 @@ const tools: ToolDef[] = [
   {
     name: 'query_work',
     description:
-      'Search your past work history by keyword (prompt/response/trace), by file touched, and/or by date range. Returns matching turns, cut. Use this BEFORE asking the user to re-explain prior work.',
+      "Search your past work history. `query` is FUZZY and RANKED — describe the concept in plain words and it returns the most relevant turns first (it matches turns containing ANY of your words, scored by overlap), so vague phrasing works. Narrow with `file` (a path fragment) and/or a date window: when the user mentions a time — 'March', 'last week', 'around April' — translate it into `since`/`until` to scope the search to that period. Use this BEFORE asking the user to re-explain prior work.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Keyword/substring to match in the prompt, response, or tool trace.' },
+        query: { type: 'string', description: 'What you are looking for, in plain words (fuzzy + ranked — no need for an exact phrase).' },
         file: { type: 'string', description: 'Match turns that read/wrote/edited a file whose path contains this.' },
-        since: { type: 'string', description: 'ISO date — only turns on/after this.' },
-        until: { type: 'string', description: 'ISO date — only turns on/before this.' },
+        since: { type: 'string', description: "ISO date (YYYY-MM-DD). Set from the user's time reference — e.g. 'March' → since 2026-03-01." },
+        until: { type: 'string', description: "ISO date (YYYY-MM-DD). Set from the user's time reference — e.g. 'March' → until 2026-03-31." },
         scope: { type: 'string', enum: ['project', 'global'] },
         limit: { type: 'number', description: 'Max matching turns (default 20).' },
       },
