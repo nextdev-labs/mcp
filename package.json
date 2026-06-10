@@ -1,12 +1,11 @@
 {
   "name": "@nextdev-labs/mcp",
   "version": "0.6.1",
-  "description": "Open-source MCP server for the Nextdev Agent Usability Index — query, recommend, and compare developer APIs (Stripe, Plaid, Twilio, Persona, AgentMail, and more) by agent-readiness; pull full structured post content. Hosted at https://www.joinnextdev.com/api/mcp.",
+  "description": "Local-first MCP to query your own AI work history — reads the session transcripts your coding agent already writes (~/.claude/projects), cuts the noise, and returns clean, token-efficient slices of what you worked on. Plus a developer-API index (docs / rankings / reviews) proxied from Nextdev. Zero runtime dependencies.",
   "license": "MIT",
   "type": "module",
-  "main": "dist/http.js",
+  "main": "dist/worklog/queryEngine.js",
   "bin": {
-    "nextdev-mcp": "dist/http.js",
     "nextdev-worklog": "dist/worklog/stdio.js"
   },
   "files": [
@@ -16,14 +15,10 @@
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/http.js",
-    "dev": "tsx src/http.ts",
+    "start": "node dist/worklog/stdio.js",
+    "dev": "tsx src/worklog/stdio.ts",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"(add eslint when ready)\""
-  },
-  "dependencies": {
-    "firebase-admin": "^12.7.0",
-    "openai": "^4.65.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -39,9 +34,10 @@
     "mcp",
     "model-context-protocol",
     "agent",
-    "api",
-    "recommendation",
-    "agent-commerce",
+    "worklog",
+    "work-history",
+    "claude-code",
+    "developer-apis",
     "nextdev"
   ]
 }
