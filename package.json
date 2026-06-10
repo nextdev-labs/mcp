@@ -7,11 +7,10 @@
   "main": "dist/http.js",
   "bin": {
     "nextdev-mcp": "dist/http.js",
-    "nextdev-setup": "bin/nextdev-setup.mjs"
+    "nextdev-worklog": "dist/worklog/stdio.js"
   },
   "files": [
     "dist",
-    "bin",
     "README.md",
     "LICENSE"
   ],
