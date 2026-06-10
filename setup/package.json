@@ -1,0 +1,32 @@
+{
+  "name": "nextdev",
+  "version": "0.1.0",
+  "description": "One-command installer for the Nextdev MCP — registers the local worklog gateway in .mcp.json (query your own AI work history, plus a developer-API index proxied from Nextdev) and appends a reflex block to AGENTS.md / CLAUDE.md / .cursorrules so your agent uses it automatically. Zero runtime dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "nextdev": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nextdev-labs/mcp.git",
+    "directory": "setup"
+  },
+  "homepage": "https://www.joinnextdev.com/labs",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "nextdev",
+    "installer",
+    "agents.md",
+    "claude-code",
+    "cursor"
+  ]
+}
