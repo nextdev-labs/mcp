@@ -26,6 +26,7 @@ import {
   formatSession,
   type Scope,
 } from './queryEngine.js';
+import { benchmarksEnabled, remoteToolDefs, remoteInstructions, callRemoteTool } from './remote.js';
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -178,25 +179,39 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   const id = req.id ?? null;
   try {
     switch (req.method) {
-      case 'initialize':
+      case 'initialize': {
+        // Advertise both worlds: worklog instructions + (if enabled) the hosted
+        // leaderboard server's instructions.
+        const extra = await remoteInstructions();
         return ok(id, {
           protocolVersion: '2024-11-05',
           serverInfo: SERVER_INFO,
           capabilities: { tools: {} },
-          instructions: SERVER_INSTRUCTIONS,
+          instructions: extra ? `${SERVER_INSTRUCTIONS}\n\n${extra}` : SERVER_INSTRUCTIONS,
         });
+      }
 
-      case 'tools/list':
-        return ok(id, {
-          tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-        });
+      case 'tools/list': {
+        const local = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+        const remote = await remoteToolDefs(); // [] if disabled or backend unreachable
+        return ok(id, { tools: [...local, ...remote] });
+      }
 
       case 'tools/call': {
         const { name, arguments: args = {} } = req.params || {};
-        const tool = tools.find((t) => t.name === name);
-        if (!tool) return err(id, -32601, `Unknown tool: ${name}`);
-        const text = await tool.handler(args);
-        return ok(id, { content: [{ type: 'text', text }] });
+        const local = tools.find((t) => t.name === name);
+        if (local) {
+          const text = await local.handler(args);
+          return ok(id, { content: [{ type: 'text', text }] });
+        }
+        // Not a local worklog tool → forward to the hosted leaderboard MCP (moat stays server-side).
+        if (benchmarksEnabled()) {
+          const remote = await remoteToolDefs();
+          if (remote.some((t) => t.name === name)) {
+            return ok(id, await callRemoteTool(name, args));
+          }
+        }
+        return err(id, -32601, `Unknown tool: ${name}`);
       }
 
       case 'notifications/initialized':
