@@ -73,10 +73,10 @@ const SERVER_INFO = {
 // Claude Code / Cursor put this into the model's system prompt on connect, so
 // the agent reaches for these tools instead of re-asking the user.
 const SERVER_INSTRUCTIONS = [
-  'You can query the user\'s own past work history with these tools.',
-  'Before asking the user to re-explain prior work, call `query_work` (keyword / file / date) or `recent_work` to recall it yourself.',
-  'Use `list_sessions` to orient, then `get_session` to drill into one session.',
-  'All data is local and read-only.',
+  'You can also recall the user\'s OWN past work locally (instant, private — reads transcripts already on disk).',
+  'Before asking the user to re-explain something they already did, call `recent_work` (where you left off) or `query_work` to recall it yourself.',
+  '`query_work({ query, file, since, until })` is fuzzy + ranked — describe the concept in plain words, and map any time reference ("March", "last week") to `since`/`until`.',
+  'Use `list_sessions` to orient, then `get_session` to open one session in detail. All local, read-only.',
 ].join(' ');
 
 const projectCwd = () => process.cwd();
@@ -187,7 +187,7 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
           protocolVersion: '2024-11-05',
           serverInfo: SERVER_INFO,
           capabilities: { tools: {} },
-          instructions: extra ? `${SERVER_INSTRUCTIONS}\n\n${extra}` : SERVER_INSTRUCTIONS,
+          instructions: extra ? `${extra}\n\n${SERVER_INSTRUCTIONS}` : SERVER_INSTRUCTIONS,
         });
       }
 

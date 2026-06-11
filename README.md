@@ -1,69 +1,60 @@
-# Nextdev MCP — query your own AI work history
+# Nextdev MCP — current developer-API docs for your coding agent
 
 [![npm version](https://img.shields.io/npm/v/@nextdev-labs/mcp.svg?logo=npm&label=npm)](https://www.npmjs.com/package/@nextdev-labs/mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![local-first](https://img.shields.io/badge/local--first-read--only-7DEFA1)](#local-first--private)
+[![local-first](https://img.shields.io/badge/worklog-local--first-7DEFA1)](#also-query-your-own-work-history)
 
-Your coding agent (Claude Code, …) already writes a **complete transcript of every session to disk**. This MCP reads it, cuts the noise, and lets your agent recall **what you actually did** — so it stops asking you to re-explain past work, and you never grep a multi‑megabyte JSONL again.
+Your agent's training data on third‑party APIs is **months stale** — endpoint names change, params move, auth flows shift. This MCP is the fastest path to the **real, current docs**: name any tool, get its live‑indexed docs, semantically pinpoint the exact capability out of 100+ pages, and route to the literal source for ground truth.
 
-100% local. Read‑only. **Zero dependencies.** Plus an optional developer‑API index (docs, rankings, reviews) so your agent stops guessing third‑party endpoints from stale training data.
+**Also** — because your agent already writes a full transcript of every session to disk — it can query your own past work, locally. 100% local for the worklog, zero dependencies.
 
 ```bash
 npx nextdev
 ```
 
-One command registers the MCP in your editor and appends a short reflex block to your `AGENTS.md` / `CLAUDE.md` / `.cursorrules`, so your agent uses it automatically. Restart your editor (or start a fresh session) and ask: **“what did I work on recently?”**
+One command registers the MCP and appends a short reflex block to your `AGENTS.md` / `CLAUDE.md` / `.cursorrules` so your agent uses it automatically. Restart your editor and ask: **“how do I do X with `<some API>`?”**
 
 ---
 
-## What you get
-
-**Work history** — local, reads `~/.claude/projects`, nothing leaves your machine:
+## The main event — developer‑API docs
 
 | tool | what it does |
 | --- | --- |
-| `recent_work` | what you did most recently, newest first |
+| `search_docs` | name any tool (`"Firecrawl"`, `"Stripe"`) + a plain‑English query → real, current docs, ranked, with canonical URLs. Resolves + **indexes unknown tools on the fly**. |
+| `get_api_surface` | the structured **endpoint + parameter** catalog for a vendor — for *“which endpoint / which parameter does X”*, not just a doc page |
+| `recommend_api` | ranked best‑API shortlist for a use case, with citations + agent‑readiness scores |
+| `leave_review` | rate a vendor you actually integrated (verified, gold‑badge) |
+
+**The chain in practice:** `search_docs({ company: "Firecrawl", query: "click a button before scraping" })` → ranks the *Interact* doc at relevance 1.0 out of 121 pages and hands back the slug + source URL → `get_api_surface` for the exact endpoint/params → WebFetch the page for ground truth. Stale guess → working call, in a couple of calls.
+
+## Also — query your own work history
+
+Local, reads `~/.claude/projects`, nothing leaves your machine:
+
+| tool | what it does |
+| --- | --- |
+| `recent_work` | what you did most recently — pick up where you left off |
 | `query_work` | **fuzzy, ranked** search of your history — by concept, file, or date range |
-| `list_sessions` | an index of your past sessions (date, turn count, files touched) |
-| `get_session` | the cut log of one session — prompt + what the agent did + tool trace |
-
-**Developer APIs** — proxied from the hosted Nextdev index (optional; `--no-benchmarks` to skip):
-
-| tool | what it does |
-| --- | --- |
-| `search_docs` | real, current docs for any vendor (Stripe, Plaid, Twilio, Persona, …) |
-| `recommend_api` | ranked best‑API shortlist for a use case, with citations |
-| `leave_review` | rate a vendor you actually integrated |
+| `list_sessions` / `get_session` | browse, then open one past session in detail |
 
 ---
 
 ## Examples — just ask your agent
 
-- *“What did I work on last week?”* → `query_work` with a date window
-- *“Find where I set up the auth flow.”* → `query_work`
-- *“Walk me through that big refactor session.”* → `list_sessions` → `get_session`
+- *“How do I verify a Stripe webhook signature?”* → `search_docs`
+- *“Which Plaid endpoint creates a link token, and what params?”* → `search_docs` → `get_api_surface`
 - *“Which API should I use to send transactional email from an agent?”* → `recommend_api`
-- *“Get me Stripe’s webhook‑signing docs.”* → `search_docs`
+- *“What did I work on last week?”* → `query_work`
 
-The agent calls these on its own — you don’t have to name Nextdev.
-
----
-
-## Why it beats re‑explaining
-
-Most “memory” tools make the model summarize each turn — lossy, token‑costly, and easy to forget. This reads the **verbatim** transcript your agent already wrote (every prompt, tool call, and file change) and cuts it to the signal **on demand**: a multi‑MB session becomes a few‑KB answer. Nothing runs in the background; there’s nothing to remember to log.
+You don’t have to name Nextdev — the agent calls these on its own.
 
 ---
 
 ## Local‑first & private
 
-The work‑history tools only ever read files already on your disk (`~/.claude/projects`) and return the result to your own agent — **nothing is uploaded.** The developer‑API tools call the hosted index over the network and **degrade gracefully when offline** (you keep the worklog). For a pure‑local install, use `--no-benchmarks`.
-
----
+The **work‑history** tools only read files already on your disk (`~/.claude/projects`) and return the result to your own agent — **nothing is uploaded.** The **developer‑API** tools query the hosted Nextdev index over the network (and degrade gracefully when offline). Want worklog‑only, no API tools? `npx nextdev --no-benchmarks`.
 
 ## Config
-
-Installer flags (`npx nextdev …`):
 
 | flag | effect |
 | --- | --- |
@@ -72,20 +63,15 @@ Installer flags (`npx nextdev …`):
 | `--backend-url=URL` | point the API tools at a different / self‑hosted index |
 | `--dry-run` / `--yes` | preview every change, write nothing / auto‑confirm |
 
-Server env vars (set in your MCP config’s `env`):
-
-- `NEXTDEV_DISABLE_BENCHMARKS=1` — worklog only.
-- `NEXTDEV_MCP_URL` — override the hosted index endpoint.
-
----
+Server env: `NEXTDEV_DISABLE_BENCHMARKS=1` (worklog only), `NEXTDEV_MCP_URL` (override the index endpoint).
 
 ## How it works
 
-Lazy **cut‑on‑read**: when the agent calls a worklog tool, the server locates the relevant session transcript(s), parses + cuts them (filtering thinking blocks, tool‑result payloads, metadata, and sidechain noise), and returns clean, ranked slices. The developer‑API tools are **forwarded** to the hosted Nextdev index — the ranking logic and data live server‑side; this package only proxies.
+The developer‑API tools forward to the hosted Nextdev index — the crawling, indexing, and ranking live server‑side; this package proxies. The worklog tools run locally with **lazy cut‑on‑read**: when called, the server reads the relevant session transcript(s), cuts the noise (thinking blocks, tool‑result payloads, metadata, sidechains), and returns clean, ranked slices.
 
 ## Editor support
 
-Claude Code today (reads `~/.claude/projects/**.jsonl`). Codex and Cursor are on the roadmap — each is a separate transcript reader behind the same tools.
+Claude Code today (the worklog reads `~/.claude/projects/**.jsonl`). Codex and Cursor are on the roadmap.
 
 ## License
 
