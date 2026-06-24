@@ -27,6 +27,7 @@ import {
   type Scope,
 } from './queryEngine.js';
 import { benchmarksEnabled, remoteToolDefs, remoteInstructions, callRemoteTool } from './remote.js';
+import { maybeSweepArchive } from './archive.js';
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -180,6 +181,9 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   try {
     switch (req.method) {
       case 'initialize': {
+        // Snapshot live transcripts into the durable local archive (debounced,
+        // non-blocking) so history survives Claude Code's ~30-day purge.
+        void maybeSweepArchive();
         // Advertise both worlds: worklog instructions + (if enabled) the hosted
         // leaderboard server's instructions.
         const extra = await remoteInstructions();

@@ -12,6 +12,7 @@
  */
 import { createInterface } from 'node:readline';
 import { dispatch } from './dispatch.js';
+import { flushArchive } from './archive.js';
 
 const rl = createInterface({ input: process.stdin });
 
@@ -40,4 +41,8 @@ rl.on('line', async (line) => {
 
 // Don't hard-exit on stdin close — let any in-flight request (e.g. a slow proxied
 // leaderboard call) finish writing, then exit naturally when the loop drains.
-rl.on('close', () => { process.exitCode = 0; });
+rl.on('close', async () => {
+  // Let any in-flight archive sweep finish its writes before we exit.
+  try { await flushArchive(); } catch { /* best-effort */ }
+  process.exitCode = 0;
+});

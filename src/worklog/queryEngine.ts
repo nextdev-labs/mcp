@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import { enumerateSessionFiles, parseTurns, RenderedTurn } from './transcriptSync.js';
+import { enumerateArchived } from './archive.js';
 
 export type Scope = 'project' | 'global';
 
@@ -44,14 +45,30 @@ const claudeCodeSource: WorkSource = {
 	},
 };
 
-// Registered sources. The OSS package reads Claude Code transcripts only.
+// ---- Source #2: durable local archive (~/.nextdev) — survives Claude Code's purge ----
+const claudeArchiveSource: WorkSource = {
+	id: 'claude-archive',
+	listRefs(projectPath, scope) {
+		return enumerateArchived(projectPath, scope);
+	},
+};
+
+// Registered sources: live Claude Code transcripts + the durable local archive.
 // (Nextdev's private build adds extra WorkSources — e.g. legacy log adapters.)
-const SOURCES: WorkSource[] = [claudeCodeSource];
+const SOURCES: WorkSource[] = [claudeCodeSource, claudeArchiveSource];
 
 function getRefs(projectPath: string, scope: Scope): SourceRef[] {
-	const refs = SOURCES.flatMap(s => {
+	const all = SOURCES.flatMap(s => {
 		try { return s.listRefs(projectPath, scope); } catch { return []; }
 	});
+	// Dedup by sessionId: a session present both live and in the archive must count
+	// once. Keep the freshest (highest sortKey) — live mtime >= archived snapshot.
+	const best = new Map<string, SourceRef>();
+	for (const r of all) {
+		const prev = best.get(r.sessionId);
+		if (!prev || r.sortKey > prev.sortKey) best.set(r.sessionId, r);
+	}
+	const refs = [...best.values()];
 	refs.sort((a, b) => b.sortKey - a.sortKey);
 	return refs;
 }

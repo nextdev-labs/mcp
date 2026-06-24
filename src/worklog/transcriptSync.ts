@@ -302,10 +302,15 @@ const SKIP_TYPES = new Set([
  * the assistant text + tool calls that follow until the next user prompt.
  */
 export function parseTurns(sessionFile: string): RenderedTurn[] {
+	return parseTurnsFromString(fs.readFileSync(sessionFile, 'utf8'));
+}
+
+/** Parse raw JSONL text (one entry per line) into renderable turns — used by the
+ *  archive source, which gunzips an archived transcript and parses it in-memory. */
+export function parseTurnsFromString(raw: string): RenderedTurn[] {
 	const turns: RenderedTurn[] = [];
 	let current: RenderedTurn | null = null;
 
-	const raw = fs.readFileSync(sessionFile, 'utf8');
 	for (const line of raw.split('\n')) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
