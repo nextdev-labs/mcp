@@ -30,6 +30,8 @@ export interface SessionRef {
 	sessionId: string;
 	projectDir: string;
 	cwd: string | null;
+	/** Set only for subagent transcripts, which nest under a parent session. */
+	parentSessionId?: string;
 }
 
 export interface TranscriptLocation {
@@ -117,6 +119,24 @@ function listSessions(projectDir: string): string[] {
 	}
 }
 
+/** Recursively list .jsonl transcripts under a directory.
+ *  Subagent output is not flat: Claude Code nests workflow agents at
+ *  subagents/workflows/<wf-id>/agent-*.jsonl, so a shallow readdir misses them. */
+function listSessionsDeep(root: string): string[] {
+	const out: string[] = [];
+	const walk = (d: string) => {
+		let entries: fs.Dirent[] = [];
+		try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+		for (const e of entries) {
+			const p = path.join(d, e.name);
+			if (e.isDirectory()) walk(p);
+			else if (e.name.endsWith('.jsonl')) out.push(p);
+		}
+	};
+	walk(root);
+	return out;
+}
+
 /**
  * Locate the newest Claude Code session transcript for the given project path.
  * Returns null if none found (e.g. the agent isn't Claude Code, or no session yet).
@@ -173,7 +193,11 @@ export function locateSession(projectPath: string, log: (m: string) => void = no
  * - 'project': sessions belonging to projectPath (encoded-dir fast path, then cwd-match fallback).
  * - 'global': every session under ~/.claude/projects.
  */
-export function enumerateSessionFiles(projectPath: string, scope: 'project' | 'global' = 'project'): SessionRef[] {
+export function enumerateSessionFiles(
+	projectPath: string,
+	scope: 'project' | 'global' = 'project',
+	opts: { includeSubagents?: boolean } = {},
+): SessionRef[] {
 	if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) return [];
 	const refs: SessionRef[] = [];
 
@@ -181,7 +205,21 @@ export function enumerateSessionFiles(projectPath: string, scope: 'project' | 'g
 		for (const sessionFile of listSessions(dir)) {
 			const cwd = readSessionCwd(sessionFile);
 			if (scope === 'project' && cwd !== null && cwd !== projectPath) continue;
-			refs.push({ sessionFile, sessionId: path.basename(sessionFile, '.jsonl'), projectDir: dir, cwd });
+			const sessionId = path.basename(sessionFile, '.jsonl');
+			refs.push({ sessionFile, sessionId, projectDir: dir, cwd });
+			// Claude Code nests fan-out transcripts at <dir>/<sessionId>/subagents/*.jsonl.
+			// A flat readdir never sees them, so they used to die with their parent at purge.
+			if (opts.includeSubagents) {
+				for (const agentFile of listSessionsDeep(path.join(dir, sessionId, 'subagents'))) {
+					refs.push({
+						sessionFile: agentFile,
+						sessionId: path.basename(agentFile, '.jsonl'),
+						projectDir: dir,
+						cwd,
+						parentSessionId: sessionId,
+					});
+				}
+			}
 		}
 	};
 

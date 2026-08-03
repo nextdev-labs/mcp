@@ -13,6 +13,7 @@
  *   - get_session    → the cut log of one session (summary | full, turn range)
  *   - query_work     → search turns by keyword / file touched / date range
  *   - recent_work    → newest turns across recent sessions
+ *   - worklog_health → is capture actually working? last sweep, skips, vault lag
  *
  * Copyright (c) 2026 Nextdev Labs. MIT licensed.
  */
@@ -27,7 +28,7 @@ import {
   type Scope,
 } from './queryEngine.js';
 import { benchmarksEnabled, remoteToolDefs, remoteInstructions, callRemoteTool } from './remote.js';
-import { maybeSweepArchive } from './archive.js';
+import { maybeSweepArchive, getHealth } from './archive.js';
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -172,6 +173,46 @@ const tools: ToolDef[] = [
     handler: async (args) => {
       const matches = recentWork({ projectPath: projectCwd(), scope: args.scope as Scope | undefined, limit: args.limit });
       return formatMatches(matches, 'Recent work');
+    },
+  },
+  {
+    name: 'worklog_health',
+    description:
+      "Report whether work-history capture is actually working: when the archive last swept, how many sessions were archived vs skipped (and why), redactions applied, and how far the off-device vault is behind. Use when the user asks whether their history is being saved, or before relying on history being complete.",
+    inputSchema: { type: 'object', properties: {} },
+    handler: async () => {
+      const h = getHealth(projectCwd());
+      const s = h.lastSweep;
+      const lines: string[] = ['**Worklog health**', ''];
+
+      if (!s) {
+        lines.push('- last sweep: **never** (no sweep.log yet — capture may not be running)');
+      } else {
+        const age = Math.round((Date.now() - new Date(s.ts).getTime()) / 60000);
+        lines.push(`- last sweep: ${s.ts.slice(0, 16).replace('T', ' ')} (${age} min ago, ${s.durationMs} ms)`);
+        lines.push(`- scanned ${s.scanned} · archived ${s.archived} · skipped ${s.skipped.length} · redactions ${s.redactions}`);
+        // Only non-routine skips are worth surfacing; "unchanged" is the healthy case.
+        const notable = s.skipped.filter((k) => k.reason !== 'unchanged');
+        if (notable.length) {
+          lines.push(`- **${notable.length} non-routine skip(s):**`);
+          for (const k of notable.slice(0, 10)) lines.push(`    - \`${k.sessionId.slice(0, 12)}\` — ${k.reason}`);
+        }
+        if (s.errors.length) {
+          lines.push(`- **${s.errors.length} error(s):**`);
+          for (const e of s.errors.slice(0, 10)) lines.push(`    - \`${e.sessionId.slice(0, 12)}\` — ${e.error}`);
+        }
+      }
+
+      lines.push(`- archived: ${h.archivedSessions} sessions, ${h.archivedSubagents} subagent transcripts`);
+      lines.push(`- live on disk: ${h.liveSessions} sessions`);
+      if (h.vaultObjects === null) {
+        lines.push('- off-device vault: **not configured** (local copy only — a disk failure loses everything)');
+      } else {
+        lines.push(`- off-device vault: ${h.vaultObjects} objects` +
+          (h.vaultLag ? ` — **${h.vaultLag} session(s) not yet uploaded**` : ' — up to date'));
+      }
+      lines.push(`- archive root: \`${h.archiveRoot}\``);
+      return lines.join('\n');
     },
   },
 ];

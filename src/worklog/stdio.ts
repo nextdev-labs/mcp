@@ -46,3 +46,14 @@ rl.on('close', async () => {
   try { await flushArchive(); } catch { /* best-effort */ }
   process.exitCode = 0;
 });
+
+// The archive writer streams now, so a sweep can be mid-file when the client shuts
+// us down. Synchronous writes used to make that impossible; they no longer do.
+// Flush before exiting so we never leave a truncated .gz — the temp+rename in
+// archiveOne() means the worst case is a discarded temp file, not a corrupt archive.
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(sig, async () => {
+    try { await flushArchive(); } catch { /* best-effort */ }
+    process.exit(0);
+  });
+}
