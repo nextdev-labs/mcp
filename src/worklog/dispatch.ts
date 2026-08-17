@@ -28,7 +28,7 @@ import {
   type Scope,
 } from './queryEngine.js';
 import { benchmarksEnabled, remoteToolDefs, remoteInstructions, callRemoteTool } from './remote.js';
-import { maybeSweepArchive, getHealth } from './archive.js';
+import { maybeSweepArchive, getHealth, getHealthDeep } from './archive.js';
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -178,10 +178,15 @@ const tools: ToolDef[] = [
   {
     name: 'worklog_health',
     description:
-      "Report whether work-history capture is actually working: when the archive last swept, how many sessions were archived vs skipped (and why), redactions applied, and how far the off-device vault is behind. Use when the user asks whether their history is being saved, or before relying on history being complete.",
-    inputSchema: { type: 'object', properties: {} },
-    handler: async () => {
-      const h = getHealth(projectCwd());
+      "Report whether work-history capture and off-device backup are actually working: when the archive last swept, sessions archived vs skipped (and why), redactions applied, when the vault last uploaded successfully, how many files are pending, and any errors. Pass deep=true to additionally count objects in the bucket itself rather than trusting the local manifest. Use when the user asks whether their history is being saved.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        deep: { type: 'boolean', description: 'Also list the cloud bucket for a true count (does network I/O).' },
+      },
+    },
+    handler: async (args) => {
+      const h = args.deep ? await getHealthDeep(projectCwd()) : getHealth(projectCwd());
       const s = h.lastSweep;
       const lines: string[] = ['**Worklog health**', ''];
 
@@ -205,13 +210,46 @@ const tools: ToolDef[] = [
 
       lines.push(`- archived: ${h.archivedSessions} sessions, ${h.archivedSubagents} subagent transcripts`);
       lines.push(`- live on disk: ${h.liveSessions} sessions`);
-      if (h.vaultObjects === null) {
-        lines.push('- off-device vault: **not configured** (local copy only — a disk failure loses everything)');
+
+      const v = h.vault;
+      lines.push('', '**Off-device vault**');
+      if (!v.configured) {
+        lines.push('- **not configured** — local copy only. A disk failure loses everything.');
+        lines.push('- to enable: write `~/.nextdev/worklog/vault.json` with `{ "bucket": …, "keyFile": … }`');
       } else {
-        lines.push(`- off-device vault: ${h.vaultObjects} objects` +
-          (h.vaultLag ? ` — **${h.vaultLag} session(s) not yet uploaded**` : ' — up to date'));
+        lines.push(`- bucket: \`${v.bucket}\``);
+        lines.push(`- uploaded (per manifest): ${v.manifestObjects} objects`);
+        if (v.liveObjects !== null) {
+          const drift = v.liveObjects - v.manifestObjects;
+          lines.push(`- **live count in bucket: ${v.liveObjects}**` +
+            (drift === 0 ? ' — matches manifest' : ` — differs from manifest by ${drift > 0 ? '+' : ''}${drift}`));
+        } else if (v.liveError) {
+          lines.push(`- live count: **FAILED** — ${v.liveError}`);
+        }
+        lines.push(v.pendingFiles === 0
+          ? '- pending upload: **0 — everything is replicated**'
+          : `- pending upload: **${v.pendingFiles} file(s) not yet in the vault**`);
+
+        // The important distinction: idle vs quietly broken.
+        if (!v.lastRun) {
+          lines.push('- last upload attempt: **never** — the sweep has not run vault sync yet');
+        } else {
+          const age = Math.round((Date.now() - new Date(v.lastRun.ts).getTime()) / 60000);
+          lines.push(`- last attempt: ${v.lastRun.ts.slice(0, 16).replace('T', ' ')} (${age} min ago) — ` +
+            `uploaded ${v.lastRun.uploaded}, skipped ${v.lastRun.skipped}, ${v.lastRun.durationMs} ms` +
+            (v.lastRun.budgetHit ? ' _(hit per-sweep budget; continues next sweep)_' : ''));
+          if (v.lastRun.failed?.length) {
+            lines.push(`- **${v.lastRun.failed.length} upload failure(s):**`);
+            for (const f of v.lastRun.failed.slice(0, 5)) lines.push(`    - ${f.name}: ${f.error}`);
+          }
+          if (v.lastRun.dirty?.length) {
+            lines.push(`- **${v.lastRun.dirty.length} file(s) WITHHELD (still contain secrets):**`);
+            for (const d of v.lastRun.dirty.slice(0, 5)) lines.push(`    - ${d}`);
+          }
+        }
+        lines.push(`- last successful run: ${v.lastSuccessAt ? v.lastSuccessAt.slice(0, 16).replace('T', ' ') : '**none**'}`);
       }
-      lines.push(`- archive root: \`${h.archiveRoot}\``);
+      lines.push('', `- archive root: \`${h.archiveRoot}\``);
       return lines.join('\n');
     },
   },

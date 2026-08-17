@@ -32,6 +32,7 @@ import { createReadStream, createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import { enumerateSessionFiles, parseTurnsFromString } from './transcriptSync.js';
 import { redactLine } from './redact.js';
+import { syncVault, loadConfig, countObjects, manifestCount, pendingCount, type VaultStats } from './vault.js';
 import type { SourceRef, Scope } from './queryEngine.js';
 
 const NEXTDEV_ROOT = path.join(os.homedir(), '.nextdev', 'worklog');
@@ -56,6 +57,8 @@ interface ArchiveMeta {
 }
 
 export interface SweepStats {
+  /** Distinguishes log lines. Absent on entries written before vault sync existed. */
+  kind?: 'archive';
   ts: string;
   scanned: number;
   archived: number;
@@ -113,7 +116,9 @@ async function archiveOne(src: string, destGz: string): Promise<{ redactions: nu
   return { redactions };
 }
 
-function appendSweepLog(stats: SweepStats): void {
+/** One JSON line per event. `kind` lets archive and vault entries share the file
+ *  while health can still find the most recent of each. */
+function appendLog(entry: Record<string, unknown>): void {
   try {
     fs.mkdirSync(path.dirname(SWEEP_LOG), { recursive: true });
     try {
@@ -121,8 +126,27 @@ function appendSweepLog(stats: SweepStats): void {
         fs.renameSync(SWEEP_LOG, `${SWEEP_LOG}.1`);
       }
     } catch { /* no log yet */ }
-    fs.appendFileSync(SWEEP_LOG, JSON.stringify(stats) + '\n');
+    fs.appendFileSync(SWEEP_LOG, JSON.stringify(entry) + '\n');
   } catch { /* logging must never break a sweep */ }
+}
+
+function appendSweepLog(stats: SweepStats): void {
+  appendLog({ kind: 'archive', ...stats });
+}
+
+/** Read the newest log entry of a given kind. Entries written before vault sync
+ *  existed carry no `kind`, so they count as 'archive'. */
+function lastLogEntry(kind: 'archive' | 'vault'): any | null {
+  let lines: string[];
+  try { lines = fs.readFileSync(SWEEP_LOG, 'utf8').trimEnd().split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]) continue;
+    try {
+      const e = JSON.parse(lines[i]);
+      if ((e.kind || 'archive') === kind) return e;
+    } catch { /* skip a torn line */ }
+  }
+  return null;
 }
 
 /**
@@ -237,19 +261,40 @@ export interface HealthReport {
   archivedSessions: number;
   archivedSubagents: number;
   liveSessions: number;
-  vaultObjects: number | null;
-  vaultLag: number | null;   // sessions archived locally but not yet in the vault
   archiveRoot: string;
+  vault: {
+    configured: boolean;
+    bucket: string | null;
+    /** Newest vault log entry — the only way to tell "nothing to upload" apart from
+     *  "uploads have been failing silently". */
+    lastRun: (VaultStats & { ts: string }) | null;
+    lastSuccessAt: string | null;
+    manifestObjects: number;
+    pendingFiles: number;
+    /** Live bucket count. Only populated by getHealthDeep(); null otherwise. */
+    liveObjects: number | null;
+    liveError: string | null;
+  };
+}
+
+/** Newest vault run that actually succeeded — uploaded something with no failures,
+ *  or had nothing to do and no failures. Distinguishes idle from broken. */
+function lastVaultSuccess(): string | null {
+  let lines: string[];
+  try { lines = fs.readFileSync(SWEEP_LOG, 'utf8').trimEnd().split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]) continue;
+    try {
+      const e = JSON.parse(lines[i]);
+      if (e.kind === 'vault' && (e.failed?.length || 0) === 0) return e.ts;
+    } catch { /* skip */ }
+  }
+  return null;
 }
 
 /** Everything needed to answer "is my history actually being saved?" */
 export function getHealth(projectPath: string): HealthReport {
-  let lastSweep: SweepStats | null = null;
-  try {
-    const txt = fs.readFileSync(SWEEP_LOG, 'utf8').trimEnd();
-    const last = txt.slice(txt.lastIndexOf('\n') + 1);
-    lastSweep = JSON.parse(last);
-  } catch { /* no sweep yet */ }
+  const lastSweep: SweepStats | null = lastLogEntry('archive');
 
   let archivedSessions = 0, archivedSubagents = 0;
   const walk = (dir: string, depth: number) => {
@@ -266,21 +311,38 @@ export function getHealth(projectPath: string): HealthReport {
   let liveSessions = 0;
   try { liveSessions = enumerateSessionFiles(projectPath, 'global').length; } catch { /* ignore */ }
 
-  let vaultObjects: number | null = null;
-  try {
-    const man = JSON.parse(fs.readFileSync(VAULT_MANIFEST, 'utf8'));
-    vaultObjects = Object.values(man).reduce((n: number, v: any) => n + (v?.length || 0), 0);
-  } catch { /* no vault */ }
-
+  const cfg = loadConfig();
   return {
     lastSweep,
     archivedSessions,
     archivedSubagents,
     liveSessions,
-    vaultObjects,
-    vaultLag: vaultObjects === null ? null : Math.max(0, archivedSessions - vaultObjects),
     archiveRoot: ARCHIVE_ROOT,
+    vault: {
+      configured: cfg !== null,
+      bucket: cfg?.bucket ?? null,
+      lastRun: lastLogEntry('vault'),
+      lastSuccessAt: lastVaultSuccess(),
+      manifestObjects: manifestCount(),
+      pendingFiles: cfg ? pendingCount(ARCHIVE_ROOT) : 0,
+      liveObjects: null,
+      liveError: null,
+    },
   };
+}
+
+/**
+ * getHealth() plus a LIVE bucket listing. The manifest is only a local record of what
+ * we believe was uploaded; this asks the bucket itself. Use it for a periodic
+ * "everything really is saved" check rather than on every call — it does network I/O.
+ */
+export async function getHealthDeep(projectPath: string): Promise<HealthReport> {
+  const h = getHealth(projectPath);
+  const cfg = loadConfig();
+  if (!cfg) return h;
+  try { h.vault.liveObjects = await countObjects(cfg); }
+  catch (e: any) { h.vault.liveError = String(e?.message || e).slice(0, 200); }
+  return h;
 }
 
 // ── Debounced, non-blocking trigger (called on every MCP `initialize`) ─────────
@@ -307,7 +369,13 @@ export function maybeSweepArchive(): void {
   pending = (async () => {
     try {
       await Promise.resolve();       // let `initialize` respond first
+      // Local archiving first and unconditionally — durability on disk must never
+      // depend on the network being reachable.
       await syncArchive(process.cwd(), 'global');
+      // Then replicate off-device. Best-effort: a failure here is logged and
+      // surfaced by worklog_health, and retried on the next sweep.
+      const v = await syncVault(ARCHIVE_ROOT);
+      if (v.configured) appendLog({ kind: 'vault', ts: new Date().toISOString(), ...v });
     } catch { /* recorded in sweep.log */ }
     finally { stampNow(); pending = null; }
   })();
